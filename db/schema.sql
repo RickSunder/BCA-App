@@ -4,8 +4,6 @@
 -- ============================================================
 
 -- Counter table for auto-generating projectId
-USE backcross_admin;
-
 CREATE TABLE Counter (
   requestType  NVARCHAR(10) NOT NULL,
   year         INT          NOT NULL,

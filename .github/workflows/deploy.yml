@@ -1,24 +1,11 @@
 # ============================================================
-# BCA Admin — CI/CD Pipeline
-# Builds Next.js app, deploys Azure infra (Bicep), deploys app
-# ============================================================
+# BCA Admin — Deploy to Azure App Service
+# Builds the Next.js app and deploys it to Azure Web App
 #
 # REQUIRED GitHub Secrets (Settings → Secrets → Actions):
+#   AZURE_CREDENTIALS - Service principal JSON from az ad sp create-for-rbac
 #
-#   AZURE_CREDENTIALS       - Service principal JSON (see setup guide below)
-#   AZURE_SUBSCRIPTION_ID   - Your Azure subscription ID
-#   SQL_ADMIN_PASSWORD      - Password for Azure SQL Server admin
-#
-# SETUP (run once in your terminal):
-#
-#   az login
-#   az ad sp create-for-rbac \
-#     --name "bca-admin-github" \
-#     --role contributor \
-#     --scopes /subscriptions/<YOUR_SUBSCRIPTION_ID> \
-#     --sdk-auth
-#
-#   Copy the JSON output → GitHub Secret: AZURE_CREDENTIALS
+# See AZURE-SETUP.md for full setup instructions
 # ============================================================
 
 name: Deploy BCA Admin
@@ -26,26 +13,11 @@ name: Deploy BCA Admin
 on:
   push:
     branches: [main]
-  workflow_dispatch:           # allow manual trigger from GitHub UI
-    inputs:
-      environment:
-        description: 'Target environment'
-        required: true
-        default: 'dev'
-        type: choice
-        options: [dev, staging, prod]
-
-env:
-  AZURE_RESOURCE_GROUP: rg-bca-admin-${{ github.event.inputs.environment || 'dev' }}
-  AZURE_LOCATION: eastus
-  APP_NAME: bca-admin
-  ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
-  NODE_VERSION: '20'
+  workflow_dispatch:
 
 jobs:
-  # ── 1. Build ────────────────────────────────────────────────
-  build:
-    name: Build Next.js
+  deploy:
+    name: Build and Deploy
     runs-on: ubuntu-latest
 
     steps:
@@ -55,7 +27,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: '20'
           cache: npm
 
       - name: Install dependencies
@@ -64,8 +36,6 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          # Dummy values so Next.js build doesn't fail on missing env
-          # Real values are set as App Service environment variables by Bicep
           SQL_SERVER: build-placeholder
           SQL_DATABASE: build-placeholder
           SQL_USER: build-placeholder
@@ -77,141 +47,15 @@ jobs:
       - name: Install production dependencies
         run: npm ci --omit=dev
 
-      - name: Package app for deployment
+      - name: Package app
         run: |
-          # Bundle everything App Service needs at runtime (including node_modules)
           zip -r app.zip \
             .next \
             public \
             package.json \
             package-lock.json \
             next.config.mjs \
-            node_modules \
-            --exclude "*.test.*" --exclude "**/__tests__/**"
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-build
-          path: app.zip
-          retention-days: 1
-
-  # ── 2. Deploy Infrastructure ────────────────────────────────
-  deploy-infra:
-    name: Deploy Azure Infrastructure (Bicep)
-    runs-on: ubuntu-latest
-    needs: build
-    outputs:
-      webAppName: ${{ steps.bicep.outputs.webAppName }}
-      webAppUrl: ${{ steps.bicep.outputs.webAppUrl }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Create Resource Group (if not exists)
-        run: |
-          az group create \
-            --name ${{ env.AZURE_RESOURCE_GROUP }} \
-            --location ${{ env.AZURE_LOCATION }} \
-            --output none
-
-      - name: Deploy Bicep template
-        id: bicep
-        uses: azure/arm-deploy@v2
-        with:
-          subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          resourceGroupName: ${{ env.AZURE_RESOURCE_GROUP }}
-          template: ./infra/main.bicep
-          parameters: >
-            environment=${{ env.ENVIRONMENT }}
-            appName=${{ env.APP_NAME }}
-            sqlAdminPassword=${{ secrets.SQL_ADMIN_PASSWORD }}
-            appServiceSku=F1
-          failOnStdErr: false
-
-  # ── 3. Run DB Schema ─────────────────────────────────────────
-  deploy-schema:
-    name: Apply DB Schema
-    runs-on: ubuntu-latest
-    needs: deploy-infra
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Get SQL Server details
-        id: sql-details
-        run: |
-          SQL_SERVER=$(az sql server list \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --query "[0].fullyQualifiedDomainName" -o tsv)
-          SQL_DB=$(az sql db list \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --server $(az sql server list --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "[0].name" -o tsv) \
-            --query "[?name!='master'].name | [0]" -o tsv)
-          echo "server=$SQL_SERVER" >> $GITHUB_OUTPUT
-          echo "database=$SQL_DB" >> $GITHUB_OUTPUT
-
-      - name: Install sqlcmd
-        run: |
-          curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/microsoft.gpg
-          curl -sSL https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
-          sudo apt-get update -q
-          sudo ACCEPT_EULA=Y apt-get install -yq mssql-tools18 unixodbc-dev
-          echo "/opt/mssql-tools18/bin" >> $GITHUB_PATH
-
-      - name: Allow GitHub Actions IP on SQL firewall
-        run: |
-          MY_IP=$(curl -s https://api.ipify.org)
-          az sql server firewall-rule create \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --server $(az sql server list --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "[0].name" -o tsv) \
-            --name "github-actions-${{ github.run_id }}" \
-            --start-ip-address $MY_IP \
-            --end-ip-address $MY_IP
-
-      - name: Apply schema
-        run: |
-          sqlcmd -S ${{ steps.sql-details.outputs.server }} \
-            -d ${{ steps.sql-details.outputs.database }} \
-            -U sqladmin \
-            -P "${{ secrets.SQL_ADMIN_PASSWORD }}" \
-            -i db/schema.sql \
-            -C -N \
-            -b
-        continue-on-error: true  # Schema may already exist on subsequent deploys
-
-      - name: Remove temporary firewall rule
-        if: always()
-        run: |
-          az sql server firewall-rule delete \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --server $(az sql server list --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "[0].name" -o tsv) \
-            --name "github-actions-${{ github.run_id }}" \
-            --yes || true
-
-  # ── 4. Deploy App ────────────────────────────────────────────
-  deploy-app:
-    name: Deploy App to Azure App Service
-    runs-on: ubuntu-latest
-    needs: [deploy-infra, deploy-schema]
-
-    steps:
-      - name: Download build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: app-build
+            node_modules
 
       - name: Azure Login
         uses: azure/login@v2
@@ -221,9 +65,5 @@ jobs:
       - name: Deploy to App Service
         uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ needs.deploy-infra.outputs.webAppName }}
+          app-name: app-bca-admin-dev
           package: app.zip
-
-      - name: Print deployment URL
-        run: |
-          echo "✅ Deployed to: ${{ needs.deploy-infra.outputs.webAppUrl }}"
