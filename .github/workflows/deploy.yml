@@ -46,13 +46,13 @@ jobs:
 
       - name: Package app
         run: |
-          zip -ry app.zip \
+          zip -r app.zip \
             .next \
             public \
             package.json \
             package-lock.json \
             next.config.mjs \
-            node_modules
+            startup.sh
 
       - name: Azure Login
         uses: azure/login@v2
