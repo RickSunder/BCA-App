@@ -21,8 +21,8 @@ param sqlAdminLogin string = 'sqladmin'
 param sqlAdminPassword string
 
 @description('App Service Plan SKU (B1 = Basic, P1v3 = Premium)')
-@allowed(['B1', 'B2', 'P1v3', 'P2v3'])
-param appServiceSku string = 'B1'
+@allowed(['F1', 'B1', 'B2', 'P1v3', 'P2v3'])
+param appServiceSku string = 'F1'
 
 @description('Azure SQL Database SKU')
 @allowed(['Basic', 'S0', 'S1', 'S2'])
@@ -93,7 +93,7 @@ resource webApp 'Microsoft.Web/sites@2023-01-01' = {
     siteConfig: {
       linuxFxVersion: 'NODE|20-lts'
       appCommandLine: 'npm start'
-      alwaysOn: appServiceSku != 'B1'  // AlwaysOn not available on B1 Free/Basic
+      alwaysOn: appServiceSku != 'F1' && appServiceSku != 'B1'  // AlwaysOn not available on Free/Basic tiers
       nodeVersion: '20-lts'
       appSettings: [
         {
@@ -133,14 +133,10 @@ resource webApp 'Microsoft.Web/sites@2023-01-01' = {
           name: 'SQL_TRUST_SERVER_CERT'
           value: 'false'
         }
-        // Required for Next.js zip deploys on App Service
+        // Disable server-side build — app is pre-built and node_modules are bundled in the zip
         {
           name: 'SCM_DO_BUILD_DURING_DEPLOYMENT'
-          value: 'true'
-        }
-        {
-          name: 'WEBSITE_RUN_FROM_PACKAGE'
-          value: '1'
+          value: 'false'
         }
       ]
     }
