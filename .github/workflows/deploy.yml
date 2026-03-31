@@ -44,12 +44,9 @@ jobs:
           SQL_ENCRYPT: 'true'
           SQL_TRUST_SERVER_CERT: 'false'
 
-      - name: Remove dev dependencies
-        run: npm prune --omit=dev
-
       - name: Package app
         run: |
-          zip -r app.zip \
+          zip -ry app.zip \
             .next \
             public \
             package.json \

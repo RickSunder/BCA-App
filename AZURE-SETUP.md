@@ -155,7 +155,7 @@ Your app reads database credentials from environment variables. Set them here.
 
 1. Still on your Web App, go to **Configuration** in the left menu
 2. Click the **General settings** tab
-3. Set **Startup Command** to: `npm start`
+3. Set **Startup Command** to: `node node_modules/next/dist/bin/next start`
 4. Click **Save**
 
 ---
