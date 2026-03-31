@@ -44,8 +44,8 @@ jobs:
           SQL_ENCRYPT: 'true'
           SQL_TRUST_SERVER_CERT: 'false'
 
-      - name: Install production dependencies
-        run: npm ci --omit=dev
+      - name: Remove dev dependencies
+        run: npm prune --omit=dev
 
       - name: Package app
         run: |
