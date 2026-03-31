@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.github
+.claude
+infra
+db
+packages
+startup.sh
+*.md
+*.log
+npm-debug.log*
